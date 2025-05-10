@@ -1,0 +1,10 @@
+# ... existing code ...
+[dependencies]
+# ... 既存の依存関係 ...
+
+# 互換性モジュールの依存関係
+thiserror = "1.0"
+chrono = "0.4"
+uuid = { version = "1.0", features = ["v4"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+# ... existing code ...
