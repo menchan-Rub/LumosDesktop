@@ -7,4 +7,31 @@ thiserror = "1.0"
 chrono = "0.4"
 uuid = { version = "1.0", features = ["v4"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
-# ... existing code ...
+
+# シリアライズ/デシリアライズ
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 一般的なユーティリティ
+log = "0.4"
+
+# 非同期処理
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
+async-trait = "0.1"
+
+# グラフィックス関連
+wgpu = "0.18"
+bytemuck = { version = "1.14", features = ["derive"] }
+image = "0.24"
+glam = "0.24"
+
+# テスト用
+tempfile = "3.8"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "theme_performance"
+harness = false

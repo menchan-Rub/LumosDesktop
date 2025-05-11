@@ -1,770 +1,571 @@
+// LumosDesktop 通知サービス
+// ユーザー向け通知の統合的な管理システム
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
+use serde::{Serialize, Deserialize};
 
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum NotificationCategory {
-    System,
-    Security,
-    Network,
-    Hardware,
-    Application,
-    Update,
-    Calendar,
-    Email,
-    Message,
-    Social,
-    Media,
-    Weather,
-    Health,
-    Custom(String),
-}
-
-impl NotificationCategory {
-    pub fn as_str(&self) -> &str {
-        match self {
-            NotificationCategory::System => "system",
-            NotificationCategory::Security => "security",
-            NotificationCategory::Network => "network",
-            NotificationCategory::Hardware => "hardware",
-            NotificationCategory::Application => "application",
-            NotificationCategory::Update => "update",
-            NotificationCategory::Calendar => "calendar",
-            NotificationCategory::Email => "email",
-            NotificationCategory::Message => "message",
-            NotificationCategory::Social => "social",
-            NotificationCategory::Media => "media",
-            NotificationCategory::Weather => "weather",
-            NotificationCategory::Health => "health",
-            NotificationCategory::Custom(name) => name.as_str(),
-        }
-    }
-
-    pub fn from_str(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "system" => NotificationCategory::System,
-            "security" => NotificationCategory::Security,
-            "network" => NotificationCategory::Network,
-            "hardware" => NotificationCategory::Hardware,
-            "application" => NotificationCategory::Application,
-            "update" => NotificationCategory::Update,
-            "calendar" => NotificationCategory::Calendar,
-            "email" => NotificationCategory::Email,
-            "message" => NotificationCategory::Message,
-            "social" => NotificationCategory::Social,
-            "media" => NotificationCategory::Media,
-            "weather" => NotificationCategory::Weather,
-            "health" => NotificationCategory::Health,
-            _ => NotificationCategory::Custom(s.to_string()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// 通知の優先度
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum NotificationPriority {
+    /// 低優先度
     Low,
+    /// 通常優先度
     Normal,
+    /// 高優先度
     High,
+    /// 緊急
     Critical,
 }
 
-impl NotificationPriority {
-    pub fn as_i32(&self) -> i32 {
-        match self {
-            NotificationPriority::Low => 0,
-            NotificationPriority::Normal => 1,
-            NotificationPriority::High => 2,
-            NotificationPriority::Critical => 3,
-        }
-    }
-
-    pub fn from_i32(value: i32) -> Self {
-        match value {
-            0 => NotificationPriority::Low,
-            1 => NotificationPriority::Normal,
-            2 => NotificationPriority::High,
-            3 => NotificationPriority::Critical,
-            _ => NotificationPriority::Normal,
-        }
+impl Default for NotificationPriority {
+    fn default() -> Self {
+        Self::Normal
     }
 }
 
+/// 通知のカテゴリ
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NotificationCategory {
+    /// システム通知
+    System,
+    /// アプリケーション通知
+    Application(String),
+    /// ユーザー通知
+    User,
+    /// ネットワーク通知
+    Network,
+    /// セキュリティ通知
+    Security,
+    /// 更新通知
+    Updates,
+    /// カスタムカテゴリ
+    Custom(String),
+}
+
+impl Default for NotificationCategory {
+    fn default() -> Self {
+        Self::System
+        }
+    }
+
+/// 通知のアクション
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationAction {
+    /// アクションID
     pub id: String,
+    /// アクション表示名
     pub label: String,
+    /// アイコンパス（オプション）
     pub icon: Option<String>,
-    pub callback_data: Option<String>,
+    /// デフォルトアクション
+    pub is_default: bool,
 }
 
-impl NotificationAction {
-    pub fn new(id: &str, label: &str) -> Self {
-        Self {
-            id: id.to_string(),
-            label: label.to_string(),
-            icon: None,
-            callback_data: None,
-        }
+/// 通知ID
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct NotificationId(Uuid);
+
+impl NotificationId {
+    /// 新しい通知IDを生成
+    pub fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+    
+    /// 文字列表現を取得
+    pub fn as_string(&self) -> String {
+        self.0.to_string()
+    }
     }
 
-    pub fn with_icon(mut self, icon: &str) -> Self {
-        self.icon = Some(icon.to_string());
-        self
-    }
-
-    pub fn with_callback_data(mut self, data: &str) -> Self {
-        self.callback_data = Some(data.to_string());
-        self
+impl Default for NotificationId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
+/// 通知
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Notification {
-    pub id: String,
-    pub app_id: String,
-    pub app_name: String,
-    pub app_icon: Option<String>,
-    pub category: NotificationCategory,
-    pub priority: NotificationPriority,
+    /// 通知ID
+    #[serde(skip)]
+    pub id: NotificationId,
+    /// 通知タイトル
     pub title: String,
+    /// 通知本文
     pub body: String,
+    /// 通知アイコン
     pub icon: Option<String>,
-    pub sound: Option<String>,
+    /// 通知カテゴリ
+    pub category: NotificationCategory,
+    /// 通知優先度
+    pub priority: NotificationPriority,
+    /// 通知アクション
     pub actions: Vec<NotificationAction>,
-    pub persistent: bool,
-    pub timestamp: SystemTime,
+    /// 通知の作成時間
+    pub creation_time: SystemTime,
+    /// 通知の有効期限
     pub expiration: Option<SystemTime>,
-    pub user_interaction: bool,
-    pub read: bool,
+    /// 通知の送信元アプリケーション
+    pub app_id: Option<String>,
+    /// 通知が既読かどうか
+    pub is_read: bool,
+    /// 通知が閉じられたかどうか
+    pub is_dismissed: bool,
+    /// 追加メタデータ
+    pub metadata: HashMap<String, String>,
 }
 
 impl Notification {
-    pub fn new(app_id: &str, app_name: &str, title: &str, body: &str) -> Self {
+    /// 新しい通知を作成
+    pub fn new<S: Into<String>>(title: S, body: S) -> Self {
         Self {
-            id: Uuid::new_v4().to_string(),
-            app_id: app_id.to_string(),
-            app_name: app_name.to_string(),
-            app_icon: None,
-            category: NotificationCategory::Application,
-            priority: NotificationPriority::Normal,
-            title: title.to_string(),
-            body: body.to_string(),
+            id: NotificationId::new(),
+            title: title.into(),
+            body: body.into(),
             icon: None,
-            sound: None,
+            category: NotificationCategory::default(),
+            priority: NotificationPriority::default(),
             actions: Vec::new(),
-            persistent: false,
-            timestamp: SystemTime::now(),
+            creation_time: SystemTime::now(),
             expiration: None,
-            user_interaction: false,
-            read: false,
+            app_id: None,
+            is_read: false,
+            is_dismissed: false,
+            metadata: HashMap::new(),
         }
     }
+    
+    /// 通知にアクションを追加
+    pub fn add_action<S: Into<String>>(mut self, id: S, label: S) -> Self {
+        self.actions.push(NotificationAction {
+            id: id.into(),
+            label: label.into(),
+            icon: None,
+            is_default: false,
+        });
+        self
+    }
+    
+    /// 通知にデフォルトアクションを追加
+    pub fn add_default_action<S: Into<String>>(mut self, id: S, label: S) -> Self {
+        self.actions.push(NotificationAction {
+            id: id.into(),
+            label: label.into(),
+            icon: None,
+            is_default: true,
+        });
+        self
+    }
 
+    /// 通知カテゴリを設定
     pub fn with_category(mut self, category: NotificationCategory) -> Self {
         self.category = category;
         self
     }
 
+    /// 通知優先度を設定
     pub fn with_priority(mut self, priority: NotificationPriority) -> Self {
         self.priority = priority;
         self
     }
 
-    pub fn with_icon(mut self, icon: &str) -> Self {
-        self.icon = Some(icon.to_string());
+    /// 通知アイコンを設定
+    pub fn with_icon<S: Into<String>>(mut self, icon: S) -> Self {
+        self.icon = Some(icon.into());
         self
     }
 
-    pub fn with_app_icon(mut self, icon: &str) -> Self {
-        self.app_icon = Some(icon.to_string());
+    /// 通知アプリケーションIDを設定
+    pub fn from_app<S: Into<String>>(mut self, app_id: S) -> Self {
+        self.app_id = Some(app_id.into());
         self
     }
 
-    pub fn with_sound(mut self, sound: &str) -> Self {
-        self.sound = Some(sound.to_string());
-        self
-    }
-
-    pub fn with_action(mut self, action: NotificationAction) -> Self {
-        self.actions.push(action);
-        self
-    }
-
-    pub fn with_expiration(mut self, expiration: SystemTime) -> Self {
-        self.expiration = Some(expiration);
-        self
-    }
-
-    pub fn with_expiration_duration(mut self, duration: Duration) -> Self {
+    /// 通知有効期限を設定
+    pub fn expires_in(mut self, duration: Duration) -> Self {
         self.expiration = Some(SystemTime::now() + duration);
         self
     }
 
-    pub fn make_persistent(mut self) -> Self {
-        self.persistent = true;
+    /// 通知メタデータを追加
+    pub fn with_metadata<S: Into<String>>(mut self, key: S, value: S) -> Self {
+        self.metadata.insert(key.into(), value.into());
         self
     }
 
+    /// 通知を既読にする
+    pub fn mark_as_read(&mut self) {
+        self.is_read = true;
+    }
+
+    /// 通知を閉じる
+    pub fn dismiss(&mut self) {
+        self.is_dismissed = true;
+    }
+
+    /// 通知が期限切れかどうかを確認
     pub fn is_expired(&self) -> bool {
         if let Some(expiration) = self.expiration {
-            return SystemTime::now() > expiration;
-        }
-        false
-    }
-
-    pub fn mark_as_read(&mut self) {
-        self.read = true;
-    }
-
-    pub fn mark_as_interacted(&mut self) {
-        self.user_interaction = true;
-    }
-
-    pub fn age(&self) -> Duration {
-        SystemTime::now()
-            .duration_since(self.timestamp)
-            .unwrap_or(Duration::from_secs(0))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum NotificationDoNotDisturbLevel {
-    Off,
-    Priority,
-    Total,
-}
-
-impl NotificationDoNotDisturbLevel {
-    pub fn allows_notification(&self, priority: &NotificationPriority) -> bool {
-        match self {
-            NotificationDoNotDisturbLevel::Off => true,
-            NotificationDoNotDisturbLevel::Priority => {
-                matches!(priority, NotificationPriority::High | NotificationPriority::Critical)
+            match SystemTime::now().duration_since(expiration) {
+                Ok(_) => true,
+                Err(_) => false,
             }
-            NotificationDoNotDisturbLevel::Total => {
-                matches!(priority, NotificationPriority::Critical)
+        } else {
+            false
             }
         }
     }
-}
 
-pub type NotificationId = String;
-pub type AppId = String;
-pub type NotificationHandler = Arc<dyn Fn(&Notification) + Send + Sync>;
-pub type NotificationActionHandler = Arc<dyn Fn(&str, &NotificationAction) + Send + Sync>;
+/// 通知リスナー型
+pub type NotificationListener = Box<dyn Fn(&Notification) -> bool + Send + Sync + 'static>;
 
-#[derive(Clone)]
-pub struct NotificationSettings {
-    pub enabled: bool,
-    pub do_not_disturb: NotificationDoNotDisturbLevel,
-    pub do_not_disturb_scheduled: bool,
-    pub do_not_disturb_start_time: (u8, u8), // (hour, minute) in 24h format
-    pub do_not_disturb_end_time: (u8, u8),   // (hour, minute) in 24h format
-    pub sound_enabled: bool,
-    pub vibration_enabled: bool,
-    pub max_notifications: usize,
-    pub notification_timeout: Duration,      // Default timeout for non-persistent notifications
-    pub group_by_app: bool,
-    pub allowed_categories: Option<Vec<NotificationCategory>>, // None means all categories allowed
-    pub blocked_apps: Vec<AppId>,
-}
+/// 通知アクションハンドラー型
+pub type NotificationActionHandler = Box<dyn Fn(&Notification, &str) -> bool + Send + Sync + 'static>;
 
-impl Default for NotificationSettings {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            do_not_disturb: NotificationDoNotDisturbLevel::Off,
-            do_not_disturb_scheduled: false,
-            do_not_disturb_start_time: (22, 0),   // 10:00 PM
-            do_not_disturb_end_time: (7, 0),      // 7:00 AM
-            sound_enabled: true,
-            vibration_enabled: true,
-            max_notifications: 100,
-            notification_timeout: Duration::from_secs(30),
-            group_by_app: true,
-            allowed_categories: None,
-            blocked_apps: Vec::new(),
-        }
-    }
-}
-
+/// 通知サービス
 pub struct NotificationService {
-    notifications: Arc<RwLock<HashMap<NotificationId, Notification>>>,
-    notification_queue: Arc<Mutex<VecDeque<NotificationId>>>,
-    handlers: Arc<RwLock<Vec<NotificationHandler>>>,
-    action_handlers: Arc<RwLock<HashMap<String, NotificationActionHandler>>>,
-    settings: Arc<RwLock<NotificationSettings>>,
+    /// 通知履歴
+    notifications: RwLock<VecDeque<Notification>>,
+    /// カテゴリのミュート状態
+    muted_categories: RwLock<HashMap<NotificationCategory, bool>>,
+    /// 通知リスナー
+    listeners: RwLock<Vec<NotificationListener>>,
+    /// アクションハンドラー
+    action_handlers: RwLock<HashMap<String, NotificationActionHandler>>,
+    /// 最大履歴サイズ
+    max_history_size: usize,
+    /// ドゥノット・ディスターブモード
+    do_not_disturb: Mutex<bool>,
 }
 
 impl NotificationService {
+    /// 新しい通知サービスを作成
     pub fn new() -> Self {
         Self {
-            notifications: Arc::new(RwLock::new(HashMap::new())),
-            notification_queue: Arc::new(Mutex::new(VecDeque::new())),
-            handlers: Arc::new(RwLock::new(Vec::new())),
-            action_handlers: Arc::new(RwLock::new(HashMap::new())),
-            settings: Arc::new(RwLock::new(NotificationSettings::default())),
+            notifications: RwLock::new(VecDeque::new()),
+            muted_categories: RwLock::new(HashMap::new()),
+            listeners: RwLock::new(Vec::new()),
+            action_handlers: RwLock::new(HashMap::new()),
+            max_history_size: 100,
+            do_not_disturb: Mutex::new(false),
         }
     }
 
-    pub fn initialize(&self) -> Result<(), String> {
-        // TODO: ここでローカルストレージから設定を読み込む
-        // TODO: 過去の通知を読み込む
-        Ok(())
-    }
-
-    pub fn add_notification(&self, notification: Notification) -> Result<NotificationId, String> {
-        // 設定をチェック
-        let settings = self.settings.read().unwrap();
+    /// 通知を送信
+    pub fn send(&self, notification: Notification) -> NotificationId {
+        let id = notification.id.clone();
         
-        if !settings.enabled {
-            return Err("通知は無効化されています".to_string());
-        }
-
-        // アプリがブロックされていないか確認
-        if settings.blocked_apps.contains(&notification.app_id) {
-            return Err(format!("アプリ {} は通知をブロックされています", notification.app_id));
-        }
-
-        // カテゴリが許可されているか確認
-        if let Some(allowed_categories) = &settings.allowed_categories {
-            if !allowed_categories.contains(&notification.category) {
-                return Err(format!("カテゴリ {:?} は許可されていません", notification.category));
+        // 通知をキューに追加
+        {
+            let mut notifications = self.notifications.write().unwrap();
+            notifications.push_front(notification.clone());
+            
+            // 最大サイズを超えた場合は古い通知を削除
+            while notifications.len() > self.max_history_size {
+                notifications.pop_back();
             }
         }
 
-        // DoNotDisturb モードの確認
-        let dnd_active = match settings.do_not_disturb {
-            NotificationDoNotDisturbLevel::Off => false,
-            level => {
-                let allows = level.allows_notification(&notification.priority);
+        // ドゥノット・ディスターブモードと通知カテゴリのミュート状態をチェック
+        let should_notify = {
+            let do_not_disturb = self.do_not_disturb.lock().unwrap();
                 
-                if !allows && settings.do_not_disturb_scheduled {
-                    // 時間ベースのDNDが有効かチェック
-                    let now = chrono::Local::now();
-                    let current_time = (now.hour() as u8, now.minute() as u8);
-                    
-                    let start = settings.do_not_disturb_start_time;
-                    let end = settings.do_not_disturb_end_time;
-                    
-                    // 開始時間が終了時間より後の場合（夜間を跨ぐスケジュール）
-                    if start > end {
-                        !(current_time > end && current_time < start)
+            if *do_not_disturb && notification.priority != NotificationPriority::Critical {
+                false
                     } else {
-                        current_time >= start && current_time < end
-                    }
-                } else {
-                    !allows
-                }
+                let muted_categories = self.muted_categories.read().unwrap();
+                !muted_categories.get(&notification.category).unwrap_or(&false)
             }
         };
-
-        if dnd_active {
-            // 保存はするが、実際の通知は発行しない
-            let notification_id = notification.id.clone();
-            
-            let mut notifications = self.notifications.write().unwrap();
-            notifications.insert(notification_id.clone(), notification);
-            
-            return Ok(notification_id);
-        }
-
-        // 通知を保存
-        let notification_id = notification.id.clone();
         
-        {
-            let mut notifications = self.notifications.write().unwrap();
-            
-            // 最大通知数の確認
-            if notifications.len() >= settings.max_notifications {
-                // 最も古い通知を削除
-                if let Some((oldest_id, _)) = notifications.iter()
-                    .filter(|(_, n)| !n.persistent)
-                    .min_by_key(|(_, n)| n.timestamp) {
-                    let oldest_id = oldest_id.clone();
-                    notifications.remove(&oldest_id);
+        // リスナーに通知（必要な場合）
+        if should_notify {
+            let listeners = self.listeners.read().unwrap();
+            for listener in listeners.iter() {
+                if !listener(&notification) {
+                    break;
                 }
             }
+        }
+        
+        id
+    }
+    
+    /// 通知リスナーを追加
+    pub fn add_listener<F>(&self, listener: F) where F: Fn(&Notification) -> bool + Send + Sync + 'static {
+        let mut listeners = self.listeners.write().unwrap();
+        listeners.push(Box::new(listener));
+    }
+    
+    /// アクションハンドラーを登録
+    pub fn register_action_handler<F, S: Into<String>>(&self, action_id: S, handler: F)
+    where
+        F: Fn(&Notification, &str) -> bool + Send + Sync + 'static,
+    {
+        let mut handlers = self.action_handlers.write().unwrap();
+        handlers.insert(action_id.into(), Box::new(handler));
+        }
+
+    /// 通知アクションを実行
+    pub fn trigger_action(&self, notification_id: &NotificationId, action_id: &str) -> bool {
+        // 通知を検索
+        let notification = {
+            let notifications = self.notifications.read().unwrap();
             
-            notifications.insert(notification_id.clone(), notification.clone());
+            let notification = notifications.iter().find(|n| n.id == *notification_id);
+            
+            match notification {
+                Some(n) => n.clone(),
+                None => return false,
+            }
+        };
+        
+        // アクションが存在するか確認
+        if !notification.actions.iter().any(|a| a.id == action_id) {
+            return false;
         }
-
-        // 通知キューに追加
-        {
-            let mut queue = self.notification_queue.lock().unwrap();
-            queue.push_back(notification_id.clone());
-        }
-
-        // 通知ハンドラーを呼び出し
-        {
-            let handlers = self.handlers.read().unwrap();
-            for handler in handlers.iter() {
-                handler(&notification);
+        
+        // ハンドラーを呼び出し
+        let handlers = self.action_handlers.read().unwrap();
+        
+        if let Some(handler) = handlers.get(action_id) {
+            handler(&notification, action_id)
+        } else {
+            // デフォルトのグローバルハンドラーを使用
+            if let Some(default_handler) = handlers.get("*") {
+                default_handler(&notification, action_id)
+            } else {
+                false
             }
         }
-
-        Ok(notification_id)
     }
-
-    pub fn remove_notification(&self, notification_id: &str) -> Result<(), String> {
+    
+    /// 通知を既読にする
+    pub fn mark_as_read(&self, notification_id: &NotificationId) -> bool {
         let mut notifications = self.notifications.write().unwrap();
         
-        if notifications.remove(notification_id).is_none() {
-            return Err(format!("通知 ID {} が見つかりません", notification_id));
+        if let Some(notification) = notifications.iter_mut().find(|n| n.id == *notification_id) {
+            notification.mark_as_read();
+            true
+        } else {
+            false
         }
+    }
+    
+    /// 通知を閉じる
+    pub fn dismiss(&self, notification_id: &NotificationId) -> bool {
+        let mut notifications = self.notifications.write().unwrap();
         
-        Ok(())
+        if let Some(notification) = notifications.iter_mut().find(|n| n.id == *notification_id) {
+            notification.dismiss();
+            true
+        } else {
+            false
+        }
     }
     
-    pub fn get_notification(&self, notification_id: &str) -> Option<Notification> {
-        let notifications = self.notifications.read().unwrap();
-        notifications.get(notification_id).cloned()
+    /// すべての通知を閉じる
+    pub fn dismiss_all(&self) {
+        let mut notifications = self.notifications.write().unwrap();
+        
+        for notification in notifications.iter_mut() {
+            notification.dismiss();
+        }
     }
     
+    /// カテゴリをミュート
+    pub fn mute_category(&self, category: NotificationCategory) {
+        let mut muted_categories = self.muted_categories.write().unwrap();
+        muted_categories.insert(category, true);
+    }
+    
+    /// カテゴリのミュートを解除
+    pub fn unmute_category(&self, category: NotificationCategory) {
+        let mut muted_categories = self.muted_categories.write().unwrap();
+        muted_categories.insert(category, false);
+    }
+    
+    /// ドゥノット・ディスターブモードを有効化
+    pub fn enable_do_not_disturb(&self) {
+        let mut do_not_disturb = self.do_not_disturb.lock().unwrap();
+        *do_not_disturb = true;
+    }
+    
+    /// ドゥノット・ディスターブモードを無効化
+    pub fn disable_do_not_disturb(&self) {
+        let mut do_not_disturb = self.do_not_disturb.lock().unwrap();
+        *do_not_disturb = false;
+    }
+    
+    /// ドゥノット・ディスターブモードの状態を取得
+    pub fn is_do_not_disturb(&self) -> bool {
+        let do_not_disturb = self.do_not_disturb.lock().unwrap();
+        *do_not_disturb
+    }
+    
+    /// すべての通知を取得
     pub fn get_all_notifications(&self) -> Vec<Notification> {
         let notifications = self.notifications.read().unwrap();
-        notifications.values().cloned().collect()
+        notifications.iter().cloned().collect()
     }
     
-    pub fn get_notifications_by_app(&self, app_id: &str) -> Vec<Notification> {
+    /// 未読の通知を取得
+    pub fn get_unread_notifications(&self) -> Vec<Notification> {
         let notifications = self.notifications.read().unwrap();
-        notifications.values()
-            .filter(|n| n.app_id == app_id)
+        notifications.iter()
+            .filter(|n| !n.is_read && !n.is_dismissed && !n.is_expired())
             .cloned()
             .collect()
     }
     
+    /// 特定カテゴリの通知を取得
     pub fn get_notifications_by_category(&self, category: &NotificationCategory) -> Vec<Notification> {
         let notifications = self.notifications.read().unwrap();
-        notifications.values()
-            .filter(|n| n.category == *category)
+        notifications.iter()
+            .filter(|n| n.category == *category && !n.is_dismissed && !n.is_expired())
             .cloned()
             .collect()
     }
     
-    pub fn mark_notification_as_read(&self, notification_id: &str) -> Result<(), String> {
+    /// 最大履歴サイズを設定
+    pub fn set_max_history_size(&mut self, size: usize) {
+        self.max_history_size = size;
+        
+        // 既存の通知を調整
         let mut notifications = self.notifications.write().unwrap();
-        
-        if let Some(notification) = notifications.get_mut(notification_id) {
-            notification.mark_as_read();
-            Ok(())
-        } else {
-            Err(format!("通知 ID {} が見つかりません", notification_id))
+        while notifications.len() > self.max_history_size {
+            notifications.pop_back();
         }
     }
     
-    pub fn mark_all_as_read(&self) {
+    /// 期限切れの通知をクリーンアップ
+    pub fn cleanup_expired(&self) -> usize {
         let mut notifications = self.notifications.write().unwrap();
+        let before_count = notifications.len();
         
-        for notification in notifications.values_mut() {
-            notification.mark_as_read();
-        }
-    }
-    
-    pub fn mark_app_notifications_as_read(&self, app_id: &str) {
-        let mut notifications = self.notifications.write().unwrap();
+        notifications.retain(|n| !n.is_expired());
         
-        for notification in notifications.values_mut() {
-            if notification.app_id == app_id {
-                notification.mark_as_read();
-            }
-        }
-    }
-    
-    pub fn process_action(&self, notification_id: &str, action_id: &str) -> Result<(), String> {
-        let notifications = self.notifications.read().unwrap();
-        let notification = notifications.get(notification_id)
-            .ok_or_else(|| format!("通知 ID {} が見つかりません", notification_id))?;
-        
-        let action = notification.actions.iter()
-            .find(|a| a.id == action_id)
-            .ok_or_else(|| format!("アクション ID {} が見つかりません", action_id))?;
-        
-        // アクションハンドラーを呼び出し
-        let action_handlers = self.action_handlers.read().unwrap();
-        if let Some(handler) = action_handlers.get(&action.id) {
-            handler(notification_id, action);
-        }
-        
-        // 通知が対話的に扱われたことをマーク
-        drop(notifications);
-        let mut notifications = self.notifications.write().unwrap();
-        if let Some(notification) = notifications.get_mut(notification_id) {
-            notification.mark_as_interacted();
-        }
-        
-        Ok(())
-    }
-    
-    pub fn register_notification_handler<F>(&self, handler: F)
-    where
-        F: Fn(&Notification) + Send + Sync + 'static,
-    {
-        let mut handlers = self.handlers.write().unwrap();
-        handlers.push(Arc::new(handler));
-    }
-    
-    pub fn register_action_handler<F>(&self, action_id: &str, handler: F)
-    where
-        F: Fn(&str, &NotificationAction) + Send + Sync + 'static,
-    {
-        let mut action_handlers = self.action_handlers.write().unwrap();
-        action_handlers.insert(action_id.to_string(), Arc::new(handler));
-    }
-    
-    pub fn clean_expired_notifications(&self) -> usize {
-        let mut notifications = self.notifications.write().unwrap();
-        let now = SystemTime::now();
-        
-        let expired_ids: Vec<String> = notifications.iter()
-            .filter(|(_, n)| {
-                if n.persistent {
-                    return false;
-                }
-                
-                if let Some(expiration) = n.expiration {
-                    return now > expiration;
-                }
-                
-                // 設定のデフォルトタイムアウトを使用（古すぎる通知は削除）
-                let settings = self.settings.read().unwrap();
-                let timeout = settings.notification_timeout;
-                
-                if let Ok(age) = now.duration_since(n.timestamp) {
-                    return age > timeout && n.read;
-                }
-                
-                false
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
-        
-        for id in &expired_ids {
-            notifications.remove(id);
-        }
-        
-        expired_ids.len()
-    }
-    
-    pub fn update_settings(&self, settings: NotificationSettings) {
-        let mut current_settings = self.settings.write().unwrap();
-        *current_settings = settings;
-    }
-    
-    pub fn get_settings(&self) -> NotificationSettings {
-        self.settings.read().unwrap().clone()
+        let after_count = notifications.len();
+        before_count - after_count
     }
 }
 
-// 実装例：システム通知の作成方法
-pub fn create_system_notification(title: &str, body: &str) -> Notification {
-    Notification::new("system", "System", title, body)
-        .with_category(NotificationCategory::System)
-        .with_priority(NotificationPriority::Normal)
-        .with_icon("system-notification")
-}
-
-// 実装例：エラー通知の作成方法
-pub fn create_error_notification(title: &str, body: &str) -> Notification {
-    Notification::new("system", "System", title, body)
-        .with_category(NotificationCategory::System)
-        .with_priority(NotificationPriority::High)
-        .with_icon("error-notification")
-}
-
-// 実装例：警告通知の作成方法
-pub fn create_warning_notification(title: &str, body: &str) -> Notification {
-    Notification::new("system", "System", title, body)
-        .with_category(NotificationCategory::System)
-        .with_priority(NotificationPriority::High)
-        .with_icon("warning-notification")
+impl Default for NotificationService {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     #[test]
     fn test_notification_creation() {
-        let notification = Notification::new("test-app", "Test App", "Test Title", "Test Body");
-        assert_eq!(notification.app_id, "test-app");
-        assert_eq!(notification.app_name, "Test App");
-        assert_eq!(notification.title, "Test Title");
-        assert_eq!(notification.body, "Test Body");
-        assert_eq!(notification.category, NotificationCategory::Application);
-        assert_eq!(notification.priority, NotificationPriority::Normal);
-        assert!(!notification.persistent);
-        assert!(!notification.read);
-        assert!(!notification.user_interaction);
-    }
-
-    #[test]
-    fn test_notification_with_methods() {
-        let notification = Notification::new("test-app", "Test App", "Test Title", "Test Body")
-            .with_category(NotificationCategory::System)
+        let notification = Notification::new("テストタイトル", "テスト本文")
             .with_priority(NotificationPriority::High)
-            .with_icon("test-icon")
-            .with_app_icon("app-icon")
-            .with_sound("test-sound")
-            .make_persistent();
-
-        assert_eq!(notification.category, NotificationCategory::System);
+            .with_category(NotificationCategory::System)
+            .with_icon("system-notification")
+            .add_action("ok", "OK")
+            .add_default_action("view", "詳細を表示");
+            
+        assert_eq!(notification.title, "テストタイトル");
+        assert_eq!(notification.body, "テスト本文");
         assert_eq!(notification.priority, NotificationPriority::High);
-        assert_eq!(notification.icon, Some("test-icon".to_string()));
-        assert_eq!(notification.app_icon, Some("app-icon".to_string()));
-        assert_eq!(notification.sound, Some("test-sound".to_string()));
-        assert!(notification.persistent);
-    }
-
-    #[test]
-    fn test_notification_expiration() {
-        let now = SystemTime::now();
-        let future = now + Duration::from_secs(3600);
-        let past = now - Duration::from_secs(3600);
-
-        let not_expired = Notification::new("test-app", "Test App", "Test Title", "Test Body")
-            .with_expiration(future);
-        let expired = Notification::new("test-app", "Test App", "Test Title", "Test Body")
-            .with_expiration(past);
-
-        assert!(!not_expired.is_expired());
-        assert!(expired.is_expired());
+        assert_eq!(notification.category, NotificationCategory::System);
+        assert_eq!(notification.icon, Some("system-notification".to_string()));
+        assert_eq!(notification.actions.len(), 2);
     }
 
     #[test]
     fn test_notification_service_basic() {
         let service = NotificationService::new();
-        let notification = Notification::new("test-app", "Test App", "Test Title", "Test Body");
         
-        let id = service.add_notification(notification.clone()).unwrap();
-        assert_eq!(service.get_all_notifications().len(), 1);
+        let notification = Notification::new("テスト", "これはテスト通知です");
+        let id = service.send(notification);
         
-        let retrieved = service.get_notification(&id).unwrap();
-        assert_eq!(retrieved.title, "Test Title");
+        let all = service.get_all_notifications();
+        assert_eq!(all.len(), 1);
         
-        service.mark_notification_as_read(&id).unwrap();
-        let retrieved = service.get_notification(&id).unwrap();
-        assert!(retrieved.read);
-        
-        service.remove_notification(&id).unwrap();
-        assert_eq!(service.get_all_notifications().len(), 0);
+        service.mark_as_read(&id);
+        let unread = service.get_unread_notifications();
+        assert_eq!(unread.len(), 0);
     }
 
     #[test]
-    fn test_notification_handlers() {
+    fn test_notification_listeners() {
         let service = NotificationService::new();
-        let received = Arc::new(Mutex::new(false));
-        let received_clone = Arc::clone(&received);
         
-        service.register_notification_handler(move |notification| {
-            assert_eq!(notification.title, "Handler Test");
-            *received_clone.lock().unwrap() = true;
+        let was_called = Arc::new(AtomicBool::new(false));
+        let was_called_clone = Arc::clone(&was_called);
+        
+        service.add_listener(move |notification| {
+            assert_eq!(notification.title, "リスナーテスト");
+            was_called_clone.store(true, Ordering::SeqCst);
+            true
         });
         
-        let notification = Notification::new("test-app", "Test App", "Handler Test", "Test Body");
-        service.add_notification(notification).unwrap();
+        let notification = Notification::new("リスナーテスト", "これはリスナーテスト用の通知です");
+        service.send(notification);
         
-        assert!(*received.lock().unwrap());
+        assert!(was_called.load(Ordering::SeqCst));
     }
 
     #[test]
-    fn test_action_handling() {
-        let service = NotificationService::new();
-        let action_handled = Arc::new(Mutex::new(false));
-        let action_handled_clone = Arc::clone(&action_handled);
-        
-        service.register_action_handler("test-action", move |notification_id, action| {
-            assert!(notification_id.len() > 0);
-            assert_eq!(action.id, "test-action");
-            assert_eq!(action.label, "Test Action");
-            *action_handled_clone.lock().unwrap() = true;
-        });
-        
-        let action = NotificationAction::new("test-action", "Test Action");
-        let notification = Notification::new("test-app", "Test App", "Action Test", "Test Body")
-            .with_action(action);
-        
-        let id = service.add_notification(notification).unwrap();
-        service.process_action(&id, "test-action").unwrap();
-        
-        assert!(*action_handled.lock().unwrap());
-        
-        let notification = service.get_notification(&id).unwrap();
-        assert!(notification.user_interaction);
-    }
-
-    #[test]
-    fn test_dnd_mode() {
+    fn test_action_handlers() {
         let service = NotificationService::new();
         
-        // DNDを設定
-        let mut settings = service.get_settings();
-        settings.do_not_disturb = NotificationDoNotDisturbLevel::Total;
-        service.update_settings(settings);
+        let action_triggered = Arc::new(AtomicBool::new(false));
+        let action_triggered_clone = Arc::clone(&action_triggered);
         
-        // 通常優先度の通知
-        let normal = Notification::new("test-app", "Test App", "Normal", "Body")
-            .with_priority(NotificationPriority::Normal);
-        
-        // クリティカル優先度の通知
-        let critical = Notification::new("test-app", "Test App", "Critical", "Body")
-            .with_priority(NotificationPriority::Critical);
-        
-        service.add_notification(normal.clone()).unwrap();
-        service.add_notification(critical.clone()).unwrap();
-        
-        // ハンドラーは通常の優先度では呼ばれない
-        let normal_handled = Arc::new(Mutex::new(false));
-        let normal_handled_clone = Arc::clone(&normal_handled);
-        
-        let critical_handled = Arc::new(Mutex::new(false));
-        let critical_handled_clone = Arc::clone(&critical_handled);
-        
-        service.register_notification_handler(move |notification| {
-            if notification.priority == NotificationPriority::Normal {
-                *normal_handled_clone.lock().unwrap() = true;
-            } else if notification.priority == NotificationPriority::Critical {
-                *critical_handled_clone.lock().unwrap() = true;
-            }
+        service.register_action_handler("test_action", move |notification, action_id| {
+            assert_eq!(notification.title, "アクションテスト");
+            assert_eq!(action_id, "test_action");
+            action_triggered_clone.store(true, Ordering::SeqCst);
+            true
         });
         
-        // 通知が存在しても、DNDにより通常優先度のハンドラーは呼ばれない
-        assert!(!*normal_handled.lock().unwrap());
-        // クリティカル優先度はDNDでも通過する
-        assert!(*critical_handled.lock().unwrap());
+        let notification = Notification::new("アクションテスト", "これはアクションテスト用の通知です")
+            .add_action("test_action", "テストアクション");
+            
+        let id = service.send(notification);
+        
+        assert!(service.trigger_action(&id, "test_action"));
+        assert!(action_triggered.load(Ordering::SeqCst));
     }
     
     #[test]
-    fn test_expiration_cleanup() {
+    fn test_do_not_disturb() {
         let service = NotificationService::new();
         
-        // 短い有効期限の通知を作成
-        let short_expiry = Notification::new("test-app", "Test App", "Expiring Soon", "Body")
-            .with_expiration_duration(Duration::from_millis(100));
+        let was_called = Arc::new(AtomicBool::new(false));
+        let was_called_clone = Arc::clone(&was_called);
         
-        // 長い有効期限の通知を作成
-        let long_expiry = Notification::new("test-app", "Test App", "Expiring Later", "Body")
-            .with_expiration_duration(Duration::from_secs(3600));
+        service.add_listener(move |_| {
+            was_called_clone.store(true, Ordering::SeqCst);
+            true
+        });
         
-        let short_id = service.add_notification(short_expiry).unwrap();
-        let long_id = service.add_notification(long_expiry).unwrap();
+        service.enable_do_not_disturb();
+        assert!(service.is_do_not_disturb());
         
-        assert_eq!(service.get_all_notifications().len(), 2);
+        // 通常優先度の通知は配信されない
+        let notification = Notification::new("通常通知", "これは通常優先度の通知です")
+            .with_priority(NotificationPriority::Normal);
+            
+        service.send(notification);
+        assert!(!was_called.load(Ordering::SeqCst));
         
-        // 短い通知の有効期限が切れるのを待つ
-        thread::sleep(Duration::from_millis(150));
-        
-        // 期限切れの通知をクリーンアップ
-        let cleaned = service.clean_expired_notifications();
-        assert_eq!(cleaned, 1);
-        
-        // 短い通知は削除され、長い通知は残っているはず
-        assert_eq!(service.get_all_notifications().len(), 1);
-        assert!(service.get_notification(&short_id).is_none());
-        assert!(service.get_notification(&long_id).is_some());
+        // 緊急優先度の通知は配信される
+        let critical_notification = Notification::new("緊急通知", "これは緊急優先度の通知です")
+            .with_priority(NotificationPriority::Critical);
+            
+        service.send(critical_notification);
+        assert!(was_called.load(Ordering::SeqCst));
     }
 } 
